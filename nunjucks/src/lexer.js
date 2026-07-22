@@ -39,13 +39,16 @@ let TOKEN_NONE = 'none';
 let TOKEN_SYMBOL = 'symbol';
 let TOKEN_SPECIAL = 'special';
 let TOKEN_REGEX = 'regex';
+let TOKEN_ERROR = "error"
+let TOKEN_MISSING = "missing"
 
-function token(type, value, lineno, colno) {
+function token(type, value, lineno, colno, offset) {
   return {
     type: type,
     value: value,
     lineno: lineno,
-    colno: colno
+    colno: colno,
+    offset: offset,
   };
 }
 
@@ -56,6 +59,7 @@ class Tokenizer {
     this.len = str.length;
     this.lineno = 0;
     this.colno = 0;
+    this.errors = []
 
     this.in_code = false;
 
@@ -75,9 +79,17 @@ class Tokenizer {
     this.lstripBlocks = !!opts.lstripBlocks;
   }
 
-  nextToken() {
+  nextToken () {
+    const start = this.index
+    const tok = this._nextToken();
+    if (tok && tok.start === undefined) { tok.start = start; tok.end = this.index; }
+    return tok;
+  }
+
+  _nextToken() {
     let lineno = this.lineno;
     let colno = this.colno;
+    let offset = this.index
     let tok;
 
     if (this.in_code) {
@@ -89,10 +101,10 @@ class Tokenizer {
         return null;
       } else if (cur === '"' || cur === '\'') {
         // We've hit a string
-        return token(TOKEN_STRING, this._parseString(cur), lineno, colno);
+        return token(TOKEN_STRING, this._parseString(cur), lineno, colno, offset);
       } else if ((tok = this._extract(whitespaceChars))) {
         // We hit some whitespace
-        return token(TOKEN_WHITESPACE, tok, lineno, colno);
+        return token(TOKEN_WHITESPACE, tok, lineno, colno, offset);
       } else if ((tok = this._extractString(this.tags.BLOCK_END)) ||
         (tok = this._extractString('-' + this.tags.BLOCK_END))) {
         // Special check for the block end tag
@@ -119,12 +131,12 @@ class Tokenizer {
             }
           }
         }
-        return token(TOKEN_BLOCK_END, tok, lineno, colno);
+        return token(TOKEN_BLOCK_END, tok, lineno, colno, offset);
       } else if ((tok = this._extractString(this.tags.VARIABLE_END)) ||
         (tok = this._extractString('-' + this.tags.VARIABLE_END))) {
         // Special check for variable end tag (see above)
         this.in_code = false;
-        return token(TOKEN_VARIABLE_END, tok, lineno, colno);
+        return token(TOKEN_VARIABLE_END, tok, lineno, colno, offset);
       } else if (cur === 'r' && this.str.charAt(this.index + 1) === '/') {
         // Skip past 'r/'.
         this.forwardN(2);
@@ -158,7 +170,7 @@ class Tokenizer {
         return token(TOKEN_REGEX, {
           body: regexBody,
           flags: regexFlags
-        }, lineno, colno);
+        }, lineno, colno, offset);
       } else if (delimChars.indexOf(cur) !== -1) {
         // We've hit a delimiter (a special char like a bracket)
         this.forward();
@@ -171,8 +183,9 @@ class Tokenizer {
           cur = curComplex;
 
           // See if this is a strict equality/inequality comparator
-          if (lib.indexOf(complexOps, curComplex + this.current()) !== -1) {
-            cur = curComplex + this.current();
+          const nxt = this.current()
+          if (nxt !== '' && lib.indexOf(complexOps, curComplex + this.current()) !== -1) {
+            cur = curComplex + nxt;
             this.forward();
           }
         }
@@ -212,7 +225,7 @@ class Tokenizer {
             type = TOKEN_OPERATOR;
         }
 
-        return token(type, cur, lineno, colno);
+        return token(type, cur, lineno, colno, offset);
       } else {
         // We are not at whitespace or a delimiter, so extract the
         // text and parse it
@@ -222,14 +235,14 @@ class Tokenizer {
           if (this.current() === '.') {
             this.forward();
             let dec = this._extract(intChars);
-            return token(TOKEN_FLOAT, tok + '.' + dec, lineno, colno);
+            return token(TOKEN_FLOAT, tok + '.' + dec, lineno, colno, offset);
           } else {
-            return token(TOKEN_INT, tok, lineno, colno);
+            return token(TOKEN_INT, tok, lineno, colno, offset);
           }
         } else if (tok.match(/^(true|false)$/)) {
-          return token(TOKEN_BOOLEAN, tok, lineno, colno);
+          return token(TOKEN_BOOLEAN, tok, lineno, colno, offset);
         } else if (tok === 'none') {
-          return token(TOKEN_NONE, tok, lineno, colno);
+          return token(TOKEN_NONE, tok, lineno, colno, offset);
         /*
          * Added to make the test `null is null` evaluate truthily.
          * Otherwise, Nunjucks will look up null in the context and
@@ -238,11 +251,13 @@ class Tokenizer {
          * variable.
          */
         } else if (tok === 'null') {
-          return token(TOKEN_NONE, tok, lineno, colno);
+          return token(TOKEN_NONE, tok, lineno, colno, offset);
         } else if (tok) {
-          return token(TOKEN_SYMBOL, tok, lineno, colno);
+          return token(TOKEN_SYMBOL, tok, lineno, colno, offset);
         } else {
-          throw new Error('Unexpected value while parsing: ' + tok);
+          // throw new Error('Unexpected value while parsing: ' + tok);
+          this.forward()
+          return token(TOKEN_ERROR, tok, lineno, colno, offset);
         }
       }
     } else {
@@ -259,15 +274,16 @@ class Tokenizer {
       } else if ((tok = this._extractString(this.tags.BLOCK_START + '-')) ||
         (tok = this._extractString(this.tags.BLOCK_START))) {
         this.in_code = true;
-        return token(TOKEN_BLOCK_START, tok, lineno, colno);
+        return token(TOKEN_BLOCK_START, tok, lineno, colno, offset);
       } else if ((tok = this._extractString(this.tags.VARIABLE_START + '-')) ||
         (tok = this._extractString(this.tags.VARIABLE_START))) {
         this.in_code = true;
-        return token(TOKEN_VARIABLE_START, tok, lineno, colno);
+        return token(TOKEN_VARIABLE_START, tok, lineno, colno, offset);
       } else {
         tok = '';
         let data;
         let inComment = false;
+        let lstrip = false
 
         if (this._matches(this.tags.COMMENT_START)) {
           inComment = true;
@@ -294,23 +310,29 @@ class Tokenizer {
               let lastLine = tok.slice(-this.colno);
               if (/^\s+$/.test(lastLine)) {
                 // Remove block leading whitespace from beginning of the string
-                tok = tok.slice(0, -this.colno);
-                if (!tok.length) {
-                  // All data removed, collapse to avoid unnecessary nodes
-                  // by returning next token (block start)
-                  return this.nextToken();
-                }
+                lstrip = true
               }
             }
             // If it is a start tag, stop looping
             break;
           } else if (this._matches(this.tags.COMMENT_END)) {
-            if (!inComment) {
-              throw new Error('unexpected end of comment');
+            if (inComment) {
+              tok += this._extractString(this.tags.COMMENT_END);
+              break;                                   // comment complete
             }
+            // Stray `#}` outside a comment. Nunjucks throws here; we treat it as
+            // literal text so the rest of the file still parses.
+            this.errors.push({
+              message: 'unexpected end of comment',
+              start: this.index,
+              end: this.index + this.tags.COMMENT_END.length,
+            });
             tok += this._extractString(this.tags.COMMENT_END);
             break;
           } else {
+            // Since we no longer throw, we need to make sure we check if we're finished.
+            if (this.isFinished()) { break; }
+
             // It does not match any tag, so add the character and
             // carry on
             tok += this.current();
@@ -319,13 +341,19 @@ class Tokenizer {
         }
 
         if (data === null && inComment) {
-          throw new Error('expected end of comment, got end of file');
+          this.errors.push({message: 'expected end of comment, got end of file', start: offset, end: this.index});
+          return token(TOKEN_ERROR, tok, lineno, null, offset)
         }
 
-        return token(inComment ? TOKEN_COMMENT : TOKEN_DATA,
+
+        const dataTok = token(inComment ? TOKEN_COMMENT : TOKEN_DATA,
           tok,
           lineno,
-          colno);
+          colno, offset);
+
+        if (lstrip) { dataTok.lstrip = true }
+
+        return dataTok
       }
     }
   }
@@ -340,6 +368,8 @@ class Tokenizer {
 
       if (cur === '\\') {
         this.forward();
+        if (this.isFinished()) { break; }
+
         switch (this.current()) {
           case 'n':
             str += '\n';
@@ -360,7 +390,12 @@ class Tokenizer {
       }
     }
 
-    this.forward();
+    if (!this.isFinished() && this.current() === delimiter) {
+      this.forward();
+    } else {
+      this.errors.push({ message: 'unterminated string', start: this.index, end: this.index });
+    }
+
     return str;
   }
 
@@ -535,5 +570,7 @@ module.exports = {
   TOKEN_NONE: TOKEN_NONE,
   TOKEN_SYMBOL: TOKEN_SYMBOL,
   TOKEN_SPECIAL: TOKEN_SPECIAL,
-  TOKEN_REGEX: TOKEN_REGEX
+  TOKEN_REGEX: TOKEN_REGEX,
+  TOKEN_ERROR: TOKEN_ERROR,
+  TOKEN_MISSING: TOKEN_MISSING,
 };

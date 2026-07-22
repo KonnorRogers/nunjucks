@@ -731,5 +731,174 @@
           colno: 9,
         });
     });
+
+    // it("Should handle all the bizarre ways the lexer could error", function () {
+    //   /**
+    //   * Prefix sweep: lex every prefix of every corpus entry and assert the
+    //   * invariants a language server depends on.
+    //   *
+    //   *   1. no throw          - a half-typed file must not crash the server
+    //   *   2. no infinite loop  - every token must consume at least one char
+    //   *   3. spans tile        - token[n].start === token[n-1].end, no gaps/overlaps
+    //   *   4. in bounds         - 0 <= start <= end <= source.length
+    //   *   5. full coverage     - the last token ends exactly at source.length
+    //   *
+    //   * Invariant 3 is the load-bearing one: it means offset -> token lookup can
+    //   * never land in a hole, which is what completion does on every keystroke.
+    //   *
+    //   * Usage:  node prefix-sweep.js [path-to-lexer]
+    //   */
+
+    //   // Each entry is [label, source, opts]. Add project templates here as you
+    //   // find bugs - a failing template makes a permanent regression test.
+    //   const CORPUS = [
+    //     ['basic output',
+    //       '<h1>{{ title }}</h1>'],
+
+    //     ['member + filter',
+    //       '{{ post.data.title | upper | truncate(20) }}'],
+
+    //     ['for loop',
+    //       '{% for post in collections.posts %}\n  <a href="{{ post.url }}">{{ post.data.title }}</a>\n{% endfor %}'],
+
+    //     ['comment',
+    //       'before {# a note #} after'],
+
+    //     ['include + extends',
+    //       '{% extends "base.njk" %}\n{% block content %}hi{% endblock %}\n{% include "partials/foot.njk" %}'],
+
+    //     ['dict and array literals',
+    //       '{% set cfg = {a: 1, b: [2, 3], c: "x"} %}{{ cfg.b[0] }}'],
+
+    //     ['inline if / is / not in',
+    //       '{{ page.url if page else "" }}{{ x is defined }}{{ a not in b }}'],
+
+    //     ['strings with escapes',
+    //       `{{ "a\\"b" ~ 'c\\nd' }}`],
+
+    //     ['whitespace control',
+    //       '{%- if x -%}\n  {{- y -}}\n{%- endif -%}'],
+
+    //     ['crlf line endings',
+    //       '{% if x %}\r\n  {{ y }}\r\n{% endif %}'],
+
+    //     ['astral char',
+    //       '{{ "\u{1F600}" }} tail'],
+
+    //     ['nested quotes in path',
+    //       `{% include "a/b-c.njk" ignore missing %}`],
+
+    //     ['operators',
+    //       '{{ (a + b) * c // d ** e % f == g and not h }}'],
+
+    //     ['adjacent holes',
+    //       '{{a}}{{b}}{%if c%}{%endif%}{#x#}'],
+
+    //     ['trailing text',
+    //       '{% if x %}body{% endif %}trailing text with no tag'],
+    //   ];
+
+    //   const OPTS = [
+    //     ['default', {}],
+    //     ['trimBlocks', { trimBlocks: true }],
+    //     ['lstripBlocks', { lstripBlocks: true }],
+    //     ['both', { trimBlocks: true, lstripBlocks: true }],
+    //   ];
+
+    //   const MAX_TOKENS = 10000;
+
+    //   function sweepOne(src, opts) {
+    //     const t = lexer.lex(src, opts);
+    //     const toks = [];
+    //     let tok;
+
+    //     try {
+    //       while ((tok = t.nextToken())) {
+    //         toks.push(tok);
+    //         if (toks.length > MAX_TOKENS) {
+    //           return { reason: 'infinite loop (token cap hit)', toks };
+    //         }
+    //       }
+    //     } catch (e) {
+    //       return { reason: `throw: ${e.message}`, toks };
+    //     }
+
+    //     let cursor = 0;
+    //     for (const k of toks) {
+    //       if (k.start === undefined || k.end === undefined) {
+    //         return { reason: `token missing start/end (${k.type})`, toks };
+    //       }
+    //       if (k.start !== cursor) {
+    //         return {
+    //           reason: k.start > cursor
+    //             ? `gap: ${cursor}..${k.start} uncovered before ${k.type}`
+    //             : `overlap: ${k.type} starts at ${k.start}, previous ended ${cursor}`,
+    //           toks,
+    //         };
+    //       }
+    //       if (k.end < k.start) {
+    //         return { reason: `inverted span on ${k.type}: ${k.start}..${k.end}`, toks };
+    //       }
+    //       if (k.end === k.start) {
+    //         return { reason: `zero-width token ${k.type} at ${k.start}`, toks };
+    //       }
+    //       if (k.end > src.length) {
+    //         return { reason: `out of bounds: ${k.type} end=${k.end} len=${src.length}`, toks };
+    //       }
+    //       cursor = k.end;
+    //     }
+
+    //     if (cursor !== src.length) {
+    //       return { reason: `tail uncovered: stopped at ${cursor}, len ${src.length}`, toks };
+    //     }
+
+    //     return null;
+    //   }
+
+    //   function run() {
+    //     let checked = 0;
+    //     const failures = [];
+
+    //     for (const [label, src] of CORPUS) {
+    //       for (const [optLabel, opts] of OPTS) {
+    //         // Group failures by reason so one root cause doesn't print 60 times.
+    //         const byReason = new Map();
+
+    //         for (let i = 0; i <= src.length; i++) {
+    //           checked++;
+    //           const prefix = src.slice(0, i);
+    //           const fail = sweepOne(prefix, opts);
+    //           if (!fail) continue;
+    //           if (!byReason.has(fail.reason)) {
+    //             byReason.set(fail.reason, { count: 0, first: i, prefix, toks: fail.toks });
+    //           }
+    //           byReason.get(fail.reason).count++;
+    //         }
+
+    //         for (const [reason, info] of byReason) {
+    //           failures.push({ label, optLabel, reason, ...info });
+    //         }
+    //       }
+    //     }
+
+    //     for (const f of failures) {
+    //       console.log(`FAIL  ${f.label} [${f.optLabel}]`);
+    //       console.log(`      ${f.reason}`);
+    //       console.log(`      ${f.count} prefix(es); first at length ${f.first}`);
+    //       console.log(`      input: ${JSON.stringify(f.prefix)}`);
+    //       if (f.toks && f.toks.length) {
+    //         const tail = f.toks.slice(-4);
+    //         for (const k of tail) {
+    //           console.log(`        ${String(k.type).padEnd(15)} ${JSON.stringify(k.value)}  [${k.start},${k.end})`);
+    //         }
+    //       }
+    //       console.log('');
+    //     }
+
+    //     const label = failures.length ? 'FAILED' : 'PASSED';
+    //     console.log(`${label}: ${checked} prefixes checked, ${failures.length} distinct failure(s)`);
+    //     return failures.length === 0 ? 0 : 1;
+    //   }
+    // })
   });
 }());

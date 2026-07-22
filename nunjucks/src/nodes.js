@@ -2,6 +2,26 @@
 
 const {Obj} = require('./object');
 
+let defaultWriteStream = null
+if (typeof process !== "undefined") {
+  defaultWriteStream = process.stdout
+} else {
+  // Fallback for browsers
+  defaultWriteStream = {
+    write: (obj) => {
+      if (typeof obj === "object") {
+        obj = JSON.stringify(obj, null, 2)
+      }
+
+      if (typeof obj === "string") {
+        obj = `"${obj}"`
+      }
+
+      console.log(String(obj))
+    }
+  }
+}
+
 function traverseAndCheck(obj, type, results) {
   if (obj instanceof type) {
     results.push(obj);
@@ -73,6 +93,8 @@ class NodeList extends Node {
 }
 
 const Root = NodeList.extend('Root');
+const ErrorNode = Node.extend("Error")
+const Missing = Node.extend("Missing")
 const Literal = Value.extend('Literal');
 const Symbol = Value.extend('Symbol');
 const Group = NodeList.extend('Group');
@@ -149,40 +171,49 @@ const CallExtension = Node.extend('CallExtension', {
 });
 const CallExtensionAsync = CallExtension.extend('CallExtensionAsync');
 
+
+
 // This is hacky, but this is just a debugging function anyway
-function print(str, indent, inline) {
+function print(str, indent, inline, writeStream) {
+  if (!writeStream) {
+    writeStream = defaultWriteStream
+  }
+
   var lines = str.split('\n');
 
   lines.forEach((line, i) => {
     if (line && ((inline && i > 0) || !inline)) {
-      process.stdout.write((' ').repeat(indent));
+      writeStream.write((' ').repeat(indent));
     }
     const nl = (i === lines.length - 1) ? '' : '\n';
-    process.stdout.write(`${line}${nl}`);
+    writeStream.write(`${line}${nl}`);
   });
 }
 
 // Print the AST in a nicely formatted tree format for debuggin
-function printNodes(node, indent) {
+function printNodes(node, indent, writeStream) {
+  if (!writeStream) {
+    writeStream = defaultWriteStream
+  }
   indent = indent || 0;
 
-  print(node.typename + ': ', indent);
+  print(node.typename + ': ', indent, null, writeStream);
 
   if (node instanceof NodeList) {
-    print('\n');
+    print('\n', null, null, writeStream);
     node.children.forEach((n) => {
-      printNodes(n, indent + 2);
+      printNodes(n, indent + 2, null, writeStream);
     });
   } else if (node instanceof CallExtension) {
-    print(`${node.extName}.${node.prop}\n`);
+    print(`${node.extName}.${node.prop}\n`, null, null, writeStream);
 
     if (node.args) {
-      printNodes(node.args, indent + 2);
+      printNodes(node.args, indent + 2, null, writeStream);
     }
 
     if (node.contentArgs) {
       node.contentArgs.forEach((n) => {
-        printNodes(n, indent + 2);
+        printNodes(n, indent + 2, null, writeStream);
       });
     }
   } else {
@@ -199,14 +230,14 @@ function printNodes(node, indent) {
     });
 
     if (props) {
-      print(JSON.stringify(props, null, 2) + '\n', null, true);
+      print(JSON.stringify(props, null, 2) + '\n', null, true, writeStream);
     } else {
-      print('\n');
+      print('\n', null, null, writeStream);
     }
 
     nodes.forEach(([fieldName, n]) => {
-      print(`[${fieldName}] =>`, indent + 2);
-      printNodes(n, indent + 4);
+      print(`[${fieldName}] =>`, indent + 2, null, null, writeStream);
+      printNodes(n, indent + 4, null, writeStream);
     });
   }
 }
@@ -214,6 +245,8 @@ function printNodes(node, indent) {
 module.exports = {
   Node: Node,
   Root: Root,
+  ErrorNode: ErrorNode,
+  Missing: Missing,
   NodeList: NodeList,
   Value: Value,
   Literal: Literal,
@@ -265,7 +298,6 @@ module.exports = {
   Pos: Pos,
   Compare: Compare,
   CompareOperand: CompareOperand,
-
   CallExtension: CallExtension,
   CallExtensionAsync: CallExtensionAsync,
 

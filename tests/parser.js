@@ -950,5 +950,16 @@
         [nodes.Root,
           [nodes.CallExtension, extensions[2], 'biz', null]]);
     });
+
+    it("Should parse incomplete tags", function () {
+      // const result = parser.safeParse("{{ post. }}")
+
+      // console.log(nodes.printNodes(result))
+
+      isAST(parser.parse('{{ post }}'),
+        [nodes.Root,
+          [nodes.Output,
+            [nodes.Symbol, "post"]]]);
+    })
   });
 }());
