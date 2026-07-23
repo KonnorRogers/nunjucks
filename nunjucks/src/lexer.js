@@ -310,7 +310,12 @@ class Tokenizer {
               let lastLine = tok.slice(-this.colno);
               if (/^\s+$/.test(lastLine)) {
                 // Remove block leading whitespace from beginning of the string
-                lstrip = true
+                tok = tok.slice(0, -this.colno);
+                if (!tok.length) {
+                  // All data removed, collapse to avoid unnecessary nodes
+                  // by returning next token (block start)
+                  return this.nextToken();
+                }
               }
             }
             // If it is a start tag, stop looping
